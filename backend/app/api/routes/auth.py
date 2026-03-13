@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.api.csrf import csrf_protect, new_csrf_token
 from app.core.config import settings
 from app.core.security import (
     TokenPayloadError,
@@ -44,6 +45,18 @@ def _set_auth_cookies(response: Response, *, access: str, refresh: str) -> None:
     )
 
 
+def _set_csrf_cookie(response: Response) -> None:
+    response.set_cookie(
+        "csrf_token",
+        new_csrf_token(),
+        httponly=False,
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
+        path="/",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+    )
+
+
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 def register(data: RegisterIn, db: Session = Depends(get_db)) -> UserOut:
     user = User(email=data.email.lower().strip(), hashed_password=hash_password(data.password))
@@ -77,6 +90,7 @@ def login(data: LoginIn, response: Response, db: Session = Depends(get_db)) -> U
         expires_delta=timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
     )
     _set_auth_cookies(response, access=access, refresh=refresh)
+    _set_csrf_cookie(response)
     return UserOut(id=user.id, email=user.email)
 
 
@@ -115,6 +129,7 @@ def refresh(
         expires_delta=timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
     )
     _set_auth_cookies(response, access=access, refresh=refresh_new)
+    _set_csrf_cookie(response)
     return UserOut(id=user.id, email=user.email)
 
 
@@ -123,6 +138,7 @@ def logout(
     response: Response,
     db: Session = Depends(get_db),
     access_token: str | None = Cookie(default=None),
+    _: None = Depends(csrf_protect),
 ) -> MessageOut:
     # Best-effort revoke: bump token_version for the current user, if we can.
     if access_token:
@@ -139,4 +155,5 @@ def logout(
 
     response.delete_cookie("access_token", path="/")
     response.delete_cookie("refresh_token", path="/api/v1/auth/refresh")
+    response.delete_cookie("csrf_token", path="/")
     return MessageOut(message="Logged out")

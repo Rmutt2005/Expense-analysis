@@ -8,6 +8,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.api.csrf import csrf_protect
 from app.db.session import get_db
 from app.models.category import Category
 from app.models.expense import Expense
@@ -48,6 +49,7 @@ def create_expense(
     data: ExpenseCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _: None = Depends(csrf_protect),
 ) -> ExpenseOut:
     _ensure_category_belongs_to_user(db, category_id=data.category_id, user_id=current_user.id)
     expense = Expense(
@@ -75,6 +77,7 @@ def update_expense(
     data: ExpenseUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _: None = Depends(csrf_protect),
 ) -> ExpenseOut:
     expense = db.get(Expense, expense_id)
     if not expense or expense.user_id != current_user.id:
@@ -105,6 +108,7 @@ def delete_expense(
     expense_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _: None = Depends(csrf_protect),
 ) -> ExpenseOut:
     expense = db.get(Expense, expense_id)
     if not expense or expense.user_id != current_user.id:

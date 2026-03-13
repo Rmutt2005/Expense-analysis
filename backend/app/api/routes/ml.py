@@ -128,6 +128,10 @@ def forecast(
         X_next = np.array([[dow, is_weekend, lag_1, lag_7, rolling_mean_7]], dtype=float)
         predicted = float(pipe.predict(X_next)[0])
 
+    # Spending can't be negative; clamp for display.
+    if not np.isfinite(predicted) or predicted < 0:
+        predicted = 0.0
+
     # Trend: slope of linear fit (baht/day) over lookback window.
     x = np.arange(y.size, dtype=float)
     if y.size >= 2 and np.any(y != y[0]):

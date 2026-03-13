@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     COOKIE_SECURE: bool = False
     COOKIE_SAMESITE: str = "lax"  # lax|strict|none
+    DB_AUTO_CREATE: bool = True
 
     @property
     def cors_origins(self) -> list[str]:

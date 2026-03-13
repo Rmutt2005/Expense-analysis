@@ -24,7 +24,12 @@ app.add_middleware(
 @app.on_event("startup")
 def _startup_create_tables() -> None:
     # MVP-friendly. For production, prefer Alembic migrations.
-    Base.metadata.create_all(bind=engine)
+    if settings.ENVIRONMENT.lower() == "prod":
+        # Fail fast on dangerous defaults.
+        if settings.SECRET_KEY == "change-me" or len(settings.SECRET_KEY) < 32:
+            raise RuntimeError("SECRET_KEY is too weak for production")
+    if settings.DB_AUTO_CREATE:
+        Base.metadata.create_all(bind=engine)
 
 
 app.include_router(api_router, prefix=settings.API_V1_STR)

@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.api.csrf import csrf_protect
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.category import Category
@@ -34,6 +35,7 @@ def seed_30_days(
     body: SeedRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _: None = Depends(csrf_protect),
 ) -> SeedResponse:
     if settings.ENVIRONMENT.lower() == "prod":
         raise HTTPException(status_code=404, detail="Not found")
@@ -99,4 +101,3 @@ def seed_30_days(
         categories_created=categories_created,
         expenses_created=expenses_created,
     )
-

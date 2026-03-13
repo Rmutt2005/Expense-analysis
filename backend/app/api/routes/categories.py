@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.api.csrf import csrf_protect
 from app.db.session import get_db
 from app.models.category import Category
 from app.models.user import User
@@ -34,6 +35,7 @@ def create_category(
     data: CategoryCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _: None = Depends(csrf_protect),
 ) -> CategoryOut:
     category = Category(user_id=current_user.id, name=data.name.strip(), is_active=1)
     db.add(category)
@@ -52,6 +54,7 @@ def update_category(
     data: CategoryUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _: None = Depends(csrf_protect),
 ) -> CategoryOut:
     category = db.get(Category, category_id)
     if not category or category.user_id != current_user.id:
@@ -75,6 +78,7 @@ def archive_category(
     category_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _: None = Depends(csrf_protect),
 ) -> CategoryOut:
     category = db.get(Category, category_id)
     if not category or category.user_id != current_user.id:
