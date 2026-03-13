@@ -204,8 +204,8 @@ export default function DashboardPage() {
               <Image
               src="/images/PiggybankDashboard.png"
               alt="Saving"
-              width={320}
-              height={220}
+              width={400}
+              height={300}
               className="max-h-56 w-auto object-contain"
               priority
             />
