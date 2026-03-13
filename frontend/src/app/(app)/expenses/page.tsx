@@ -196,9 +196,6 @@ export default function ExpensesPage() {
           <Button variant="secondary" onClick={() => refresh().catch(() => {})}>
             รีเฟรช
           </Button>
-          <Button variant="secondary" onClick={onSeed}>
-            สร้างข้อมูลตัวอย่าง 30 วัน
-          </Button>
         </div>
       </div>
 
