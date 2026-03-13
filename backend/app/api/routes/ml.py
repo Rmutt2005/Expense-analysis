@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
 from fastapi import APIRouter, Depends
@@ -11,8 +11,10 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.core.ml_store import dumps_model, loads_model
 from app.db.session import get_db
 from app.models.expense import Expense
+from app.models.ml_model import MlModel
 from app.models.user import User
 from app.schemas.ml import ForecastOut
 
@@ -88,33 +90,88 @@ def forecast(
     baseline_pred = float(last7.mean()) if last7.size else 0.0
 
     X_all, y_all = _build_supervised_series(dates, y)
+    predicted = baseline_pred
+
+    # Optional persisted model: retrain lazily every 7 days per user.
+    MODEL_KEY = "ridge_v1"
+    retrain_after = timedelta(days=7)
+    now = datetime.now(timezone.utc)
+
     if X_all.shape[0] >= 14:
-        # Ridge regression with scaling. Walk-forward backtest to estimate MAE.
-        pipe = Pipeline(
-            steps=[
-                ("scaler", StandardScaler()),
-                ("model", Ridge(alpha=1.0)),
-            ]
+        existing = (
+            db.execute(
+                select(MlModel).where(
+                    MlModel.user_id == current_user.id,
+                    MlModel.model_key == MODEL_KEY,
+                    MlModel.lookback_days == lookback_days,
+                )
+            )
+            .scalars()
+            .first()
         )
 
-        preds: list[float] = []
-        actuals: list[float] = []
-        for i in range(10, X_all.shape[0]):  # ensure some initial training data
-            X_train = X_all[:i]
-            y_train = y_all[:i]
-            X_test = X_all[i : i + 1]
-            y_test = y_all[i]
-            pipe.fit(X_train, y_train)
-            y_hat = float(pipe.predict(X_test)[0])
-            preds.append(y_hat)
-            actuals.append(float(y_test))
+        pipe: Pipeline | None = None
+        if existing and (now - existing.trained_at) < retrain_after:
+            try:
+                pipe = loads_model(existing.blob)
+                model_name = "ridge(day_of_week,is_weekend,lag_1,lag_7,rolling_mean_7)"
+                train_samples = int(X_all.shape[0])
+                backtest_mae = existing.backtest_mae
+                backtest_samples = int(existing.backtest_samples or 0)
+            except Exception:
+                pipe = None  # fall through to retrain
 
-        if preds:
-            backtest_samples = len(preds)
-            backtest_mae = float(np.mean(np.abs(np.array(preds) - np.array(actuals))))
+        if pipe is None:
+            # Train Ridge regression with scaling. Walk-forward backtest to estimate MAE.
+            pipe = Pipeline(
+                steps=[
+                    ("scaler", StandardScaler()),
+                    ("model", Ridge(alpha=1.0)),
+                ]
+            )
 
-        # Fit final model on all supervised samples and predict tomorrow.
-        pipe.fit(X_all, y_all)
+            preds: list[float] = []
+            actuals: list[float] = []
+            for i in range(10, X_all.shape[0]):  # ensure some initial training data
+                X_train = X_all[:i]
+                y_train = y_all[:i]
+                X_test = X_all[i : i + 1]
+                y_test = y_all[i]
+                pipe.fit(X_train, y_train)
+                y_hat = float(pipe.predict(X_test)[0])
+                preds.append(y_hat)
+                actuals.append(float(y_test))
+
+            if preds:
+                backtest_samples = len(preds)
+                backtest_mae = float(np.mean(np.abs(np.array(preds) - np.array(actuals))))
+
+            pipe.fit(X_all, y_all)
+            train_samples = int(X_all.shape[0])
+            model_name = "ridge(day_of_week,is_weekend,lag_1,lag_7,rolling_mean_7)"
+
+            blob = dumps_model(pipe)
+            if existing:
+                existing.trained_at = now
+                existing.blob = blob
+                existing.backtest_mae = backtest_mae
+                existing.backtest_samples = backtest_samples
+                db.add(existing)
+            else:
+                db.add(
+                    MlModel(
+                        user_id=current_user.id,
+                        model_key=MODEL_KEY,
+                        lookback_days=lookback_days,
+                        trained_at=now,
+                        blob=blob,
+                        backtest_mae=backtest_mae,
+                        backtest_samples=backtest_samples,
+                    )
+                )
+            db.commit()
+
+        # Predict tomorrow using the trained (cached or retrained) model.
         tomorrow = end + timedelta(days=1)
         dow, is_weekend = _day_features(tomorrow)
         lag_1 = float(y[-1]) if y.size >= 1 else 0.0
@@ -122,10 +179,6 @@ def forecast(
         rolling_mean_7 = float(y[-7:].mean()) if y.size >= 7 else float(y.mean()) if y.size else 0.0
         X_next = np.array([[dow, is_weekend, lag_1, lag_7, rolling_mean_7]], dtype=float)
         predicted = float(pipe.predict(X_next)[0])
-        model_name = "ridge(day_of_week,is_weekend,lag_1,lag_7,rolling_mean_7)"
-        train_samples = int(X_all.shape[0])
-    else:
-        predicted = baseline_pred
 
     # Trend: slope of linear fit (baht/day) over lookback window.
     x = np.arange(y.size, dtype=float)
